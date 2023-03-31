@@ -38,6 +38,7 @@ variable "avail_zone" {
 variable "my_ip" {}
 variable "instance_type" {}
 variable "public_key_location" {}
+variable "private_key_location" {}
 
 #############  define resources  #############
 // --> always avoid to use default resources/components
@@ -208,13 +209,45 @@ resource "aws_instance" "myapp-instance" {
   #                     docker run -p 8080:80 nginx
   #                 EOF
 
-  user_data = file("entry-script.sh")
+  ############### 使用 Provisioner代替user_data进行服务器的配置 #####################
+  // provisioners are not recommended, use user_data if available
+  #   user_data = file("entry-script.sh")
+  // 1st step is estanblish the connection to the remote server using ssh
+  connection {
+    type        = "ssh"
+    host        = self.public_ip
+    user        = "ec2-user"
+    private_key = file(var.private_key_location)
+  }
+
+  // File provisioner can upload local file to remote server
+  // 可以在provisioner中单独定义connection代码块可以允许provisioner访问到不同的服务器
+  provisioner "file" {
+    source      = "entry-script.sh" // local文件路径
+    destination = "/home/ec2-user/entry-script-on-ec2.sh"
+  }
+
+  // remote-exec provisioner can exct commands/scripts on remote server
+  provisioner "remote-exec" {
+    inline = [ // inline block uses list
+      "export ENV=env",
+      "mkdir newdir",
+      "sh entry-script-on-ec2.sh" // 会有权限问题
+    ]
+  }
+
+  // commands that will exct on local machine when apply/destroy
+  // use --> local_file if possible
+  provisioner "local-exec" {
+    command = "echo ${self.public_ip} > output.txt" // just an eg
+  }
 
   tags = {
     "Name" = "${var.env_prefix}-server"
   }
 }
 
+// 输出public ip
 output "instance_public_ip" {
   value = aws_instance.myapp-instance.public_ip
 }
